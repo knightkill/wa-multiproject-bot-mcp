@@ -198,6 +198,32 @@ class BotClient:
             json_body={"groupJid": group_jid},
         )
 
+    # ── project scope: 1:1 DMs (high ban-risk) ────────────────
+    # Recipients must be on the DM allowlist (admin-managed). Caps and
+    # jitter are enforced server-side and cannot be raised from here.
+
+    def send_dm(self, to_jid: str, text: str) -> Any:
+        return self._request(
+            "POST", "/v1/dm", scope="project",
+            json_body={"toJid": to_jid, "text": text},
+        )
+
+    def send_dm_batch(self, recipients: list[str], text: str) -> Any:
+        return self._request(
+            "POST", "/v1/dm/batch", scope="project",
+            json_body={"recipients": recipients, "text": text},
+        )
+
+    def dm_status(self, batch_id: str | None = None) -> Any:
+        params = {"batchId": batch_id} if batch_id else None
+        return self._request("GET", "/v1/dm/status", scope="project", params=params)
+
+    def dm_cancel(self, batch_id: str) -> Any:
+        return self._request(
+            "POST", "/v1/dm/cancel", scope="project",
+            json_body={"batchId": batch_id},
+        )
+
     # ── admin scope ───────────────────────────────────────────
 
     def list_projects(self) -> Any:
@@ -240,6 +266,21 @@ class BotClient:
     def replace_allowlist(self, jids: list[str]) -> Any:
         return self._request(
             "PUT", "/admin/api/allowlist", scope="admin", json_body={"jids": jids}
+        )
+
+    # DM allowlist + resume are admin-scoped: resuming after a WhatsApp
+    # restriction is a deliberate operator cool-off decision, withheld
+    # from project tokens so an automated loop cannot clear the pause.
+
+    def dm_resume(self) -> Any:
+        return self._request("POST", "/admin/api/dm/resume", scope="admin")
+
+    def get_dm_allowlist(self) -> Any:
+        return self._request("GET", "/admin/api/dm-allowlist", scope="admin")
+
+    def set_dm_allowlist(self, jids: list[str]) -> Any:
+        return self._request(
+            "PUT", "/admin/api/dm-allowlist", scope="admin", json_body={"jids": jids}
         )
 
     def list_messages(

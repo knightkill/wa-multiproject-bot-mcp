@@ -1,6 +1,6 @@
 # wa-multiproject-bot-mcp
 
-Local-only MCP adapter for the wa-multiproject-bot WhatsApp bot at `https://your-domain.example`. Exposes 21 tools over stdio so Claude Desktop / Claude Code can drive the bot directly — primary use case is "Claude, post this to a WhatsApp group."
+Local-only MCP adapter for the wa-multiproject-bot WhatsApp bot at `https://your-domain.example`. Exposes 28 tools over stdio so Claude Desktop / Claude Code can drive the bot directly — primary use case is "Claude, post this to a WhatsApp group."
 
 Runs entirely locally; never deployed. The bot itself stays where it is on Fly.
 
@@ -93,6 +93,13 @@ Restart any existing Claude Code session before the tools become available — m
 | `update_subject` | `POST /v1/groups/subject` | project |
 | `update_description` | `POST /v1/groups/description` | project |
 | `leave_group` | `POST /v1/groups/leave` | project |
+| `send_dm` | `POST /v1/dm` | project |
+| `send_dm_batch` | `POST /v1/dm/batch` | project |
+| `dm_status` | `GET /v1/dm/status` | project |
+| `dm_cancel` | `POST /v1/dm/cancel` | project |
+| `get_dm_allowlist` | `GET /admin/api/dm-allowlist` | admin |
+| `set_dm_allowlist` | `PUT /admin/api/dm-allowlist` | admin |
+| `dm_resume` | `POST /admin/api/dm/resume` | admin |
 
 Validation is delegated to the bot — type hints in tool signatures are for the agent's benefit; bad input produces a 400 from the bot that surfaces as the tool's error text.
 
@@ -109,6 +116,17 @@ The nine group tools use `WP_PROJECT_TOKEN` (permission parity with `post_to_gro
 - `update_subject(group_jid, subject)` — renames the group.
 - `update_description(group_jid, description)` — sets/clears the description.
 - `leave_group(group_jid)` — leaves the group and detaches it from this project; the global allowlist is left untouched (destructive).
+
+### Direct messages (1:1 — HIGH ban-risk)
+
+DMs are opt-in and deliberately constrained — the recommended distribution path is still an invite-link group post. Recipients must be on the DM allowlist; per-minute/per-day caps and randomized jitter are enforced server-side and **cannot be raised by the caller**. See [`docs/adr/0003-dm-tools.md`](docs/adr/0003-dm-tools.md).
+
+- `send_dm(to_jid, text)` — one 1:1 DM (project scope). 403 if the recipient isn't allowlisted; a 2xx means accepted-for-send, not guaranteed delivered.
+- `send_dm_batch(recipients, text)` — enqueues up to 50 DMs to drain in the background; non-allowlisted recipients come back in `skipped[]`. Returns a `batchId`.
+- `dm_status(batch_id?)` — pause state, pending count, recent volume, and the caps (read-only); pass `batch_id` for that batch's counts.
+- `dm_cancel(batch_id)` — marks still-pending rows in a batch as skipped.
+- `get_dm_allowlist()` / `set_dm_allowlist(jids)` — read / **replace** the recipient allowlist (admin scope).
+- `dm_resume()` — clears the auto-pause after a WhatsApp restriction (**admin scope on purpose** — a project token / automated loop must not be able to re-hammer a restricted account).
 
 ## Sanity check
 

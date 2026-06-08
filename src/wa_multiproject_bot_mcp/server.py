@@ -1,4 +1,4 @@
-"""FastMCP server exposing 21 tools that wrap the WhatsApp bot's HTTP API.
+"""FastMCP server exposing 28 tools that wrap the WhatsApp bot's HTTP API.
 
 Project-scope tools use $WP_PROJECT_TOKEN; admin-scope tools use
 $WP_ADMIN_TOKEN. Bot validation is authoritative — tool arguments are
@@ -292,6 +292,69 @@ def leave_group(group_jid: str) -> dict[str, Any]:
     return _call(_bot().leave_group, group_jid)
 
 
+# ── project-scope DM tools (1:1 direct messages — HIGH BAN-RISK) ─
+
+
+@mcp.tool()
+def send_dm(to_jid: str, text: str) -> dict[str, Any]:
+    """Send ONE 1:1 direct message. HIGH BAN-RISK — prefer an invite-link group post.
+
+    Direct-messaging an unsolicited recipient is the fastest way to get the paired
+    number flagged. The recipient must be on the DM allowlist (admin-managed via
+    set_dm_allowlist), else the bot returns 403. Sends are throttled server-side
+    (per-minute/per-day caps + randomized jitter) and the rate cannot be raised here.
+
+    Args:
+        to_jid: Recipient user JID, e.g. "6191234567@s.whatsapp.net".
+        text: Message body (max 4096 chars).
+
+    Returns {ok, toJid, status}. A successful return means accepted for send, NOT
+    guaranteed delivered — a WhatsApp restriction can surface a beat later.
+    """
+    return _call(_bot().send_dm, to_jid, text)
+
+
+@mcp.tool()
+def send_dm_batch(recipients: list[str], text: str) -> dict[str, Any]:
+    """Enqueue up to 50 1:1 DMs to drain in the background. HIGH BAN-RISK.
+
+    Nothing is sent synchronously: the queue drains with server-side caps + jitter the
+    caller cannot raise. Recipients not on the DM allowlist are returned in skipped[]
+    and never sent. Duplicate (batch, recipient) pairs are de-duplicated. Prefer an
+    invite-link group post for distribution.
+
+    Args:
+        recipients: Up to 50 user JIDs (…@s.whatsapp.net or @lid).
+        text: Message body (max 4096 chars).
+
+    Returns {ok, batchId, enqueued, duplicates, skipped}. Keep batchId to poll
+    dm_status(batch_id=…) or stop it with dm_cancel(batch_id=…).
+    """
+    return _call(_bot().send_dm_batch, recipients, text)
+
+
+@mcp.tool()
+def dm_status(batch_id: str | None = None) -> dict[str, Any]:
+    """DM sender status: pause state, pending count, recent volume, caps (read-only).
+
+    Pass batch_id to also get that batch's pending/sent/failed/skipped counts. Caps are
+    server-side and cannot be changed via the API.
+    """
+    return _call(_bot().dm_status, batch_id)
+
+
+@mcp.tool()
+def dm_cancel(batch_id: str) -> dict[str, Any]:
+    """Cancel a DM batch: mark every still-pending row skipped (already-sent rows untouched).
+
+    Args:
+        batch_id: The batchId returned by send_dm_batch.
+
+    Returns {ok, cancelled}.
+    """
+    return _call(_bot().dm_cancel, batch_id)
+
+
 # ── admin-scope tools ───────────────────────────────────────────
 
 
@@ -414,6 +477,44 @@ def list_messages(
         limit: Optional row cap (1-500; default 100 server-side).
     """
     return _call(_bot().list_messages, project=project, group=group, limit=limit)
+
+
+# ── admin-scope DM tools (allowlist + resume) ───────────────────
+
+
+@mcp.tool()
+def get_dm_allowlist() -> dict[str, Any]:
+    """ADMIN: get the DM (1:1) recipient allowlist. Returns {jids: [...]}.
+
+    Only recipients on this list can receive DMs via send_dm / send_dm_batch.
+    """
+    return _call(_bot().get_dm_allowlist)
+
+
+@mcp.tool()
+def set_dm_allowlist(jids: list[str]) -> dict[str, Any]:
+    """ADMIN: REPLACE the entire DM (1:1) recipient allowlist (not additive).
+
+    Args:
+        jids: Full list of permitted user JIDs (…@s.whatsapp.net or @lid). Passing []
+              clears the allowlist (blocks all DMs while allowlist enforcement is on).
+
+    Returns {ok, count}.
+    """
+    return _call(_bot().set_dm_allowlist, jids)
+
+
+@mcp.tool()
+def dm_resume() -> dict[str, Any]:
+    """ADMIN: resume DM sending after an auto-pause. Deliberate operator cool-off action.
+
+    The DM queue auto-pauses when WhatsApp restricts the account. Resuming is admin-scoped
+    on purpose so an automated project loop cannot clear the pause and re-hammer a
+    restricted number. Only call once you've decided the account has cooled off.
+
+    Returns {ok, resumed, status}.
+    """
+    return _call(_bot().dm_resume)
 
 
 # ── entry point ────────────────────────────────────────────────

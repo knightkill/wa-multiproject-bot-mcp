@@ -299,3 +299,35 @@ class BotClient:
         return self._request(
             "GET", "/admin/api/messages", scope="admin", params=params or None
         )
+
+    # Inbound capture is opt-in per chat: the bot only stores messages
+    # arriving after a jid is added via set_readable_chats (no history
+    # backfill for chats added later).
+
+    def list_readable_chats(self) -> Any:
+        return self._request("GET", "/admin/api/readable-chats", scope="admin")
+
+    def set_readable_chats(self, chats: list[dict[str, Any]]) -> Any:
+        return self._request(
+            "PUT", "/admin/api/readable-chats", scope="admin", json_body={"chats": chats}
+        )
+
+    def list_inbound(
+        self,
+        jid: str | None = None,
+        since: int | None = None,
+        from_me: bool | None = None,
+        limit: int | None = None,
+    ) -> Any:
+        params: dict[str, Any] = {}
+        if jid is not None:
+            params["jid"] = jid
+        if since is not None:
+            params["since"] = str(since)
+        if from_me is not None:
+            params["fromMe"] = "true" if from_me else "false"
+        if limit is not None:
+            params["limit"] = str(limit)
+        return self._request(
+            "GET", "/admin/api/inbound", scope="admin", params=params or None
+        )

@@ -1,4 +1,4 @@
-"""FastMCP server exposing 28 tools that wrap the WhatsApp bot's HTTP API.
+"""FastMCP server exposing 31 tools that wrap the WhatsApp bot's HTTP API.
 
 Project-scope tools use $WP_PROJECT_TOKEN; admin-scope tools use
 $WP_ADMIN_TOKEN. Bot validation is authoritative — tool arguments are
@@ -477,6 +477,72 @@ def list_messages(
         limit: Optional row cap (1-500; default 100 server-side).
     """
     return _call(_bot().list_messages, project=project, group=group, limit=limit)
+
+
+# ── admin-scope inbound tools ────────────────────────────────────
+# Capture is opt-in per chat and prospective only: the bot stores a
+# message only if it arrives after the chat's jid is in the readable-
+# chats set. Adding a jid today does NOT backfill its prior history.
+
+
+@mcp.tool()
+def list_readable_chats() -> dict[str, Any]:
+    """List chats the bot is currently capturing inbound messages from.
+
+    This is the opt-in gate for list_inbound: a chat's messages are only stored if its
+    jid is in this set at the time the message arrives. Returns {chats: [{jid, kind,
+    label, addedAt, subject}]}. `subject` is the live WhatsApp group name when available
+    (groups only); null otherwise.
+    """
+    return _call(_bot().list_readable_chats)
+
+
+@mcp.tool()
+def set_readable_chats(chats: list[dict[str, Any]]) -> dict[str, Any]:
+    """DESTRUCTIVE: REPLACE the entire readable-chats set (not additive).
+
+    Any jid currently readable but NOT in `chats` stops being captured. Turning capture
+    on for a jid is NOT retroactive — only messages that arrive after this call are
+    stored; there is no history backfill. Call list_readable_chats() first and pass the
+    complete desired set (existing entries + any you're adding).
+
+    Args:
+        chats: Full desired set, each item {"jid": str, "kind": "group" | "person",
+               "label": str (optional, 1-80 chars)}. kind must match the jid suffix
+               (group ↔ "@g.us", person ↔ "@s.whatsapp.net" or "@lid"); duplicate jids
+               are rejected with a 400.
+
+    Returns {ok}.
+    """
+    return _call(_bot().set_readable_chats, chats)
+
+
+@mcp.tool()
+def list_inbound(
+    jid: str | None = None,
+    since: int | None = None,
+    from_me: bool | None = None,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    """List recent inbound messages captured from readable chats (see list_readable_chats).
+
+    Newest first. A jid that was never added via set_readable_chats returns an empty
+    list even if the bot is a member of that chat — capture must be explicitly opted in,
+    and only messages received after opt-in are stored.
+
+    Args:
+        jid: Optional chat JID filter, e.g. "1234567890-1612345678@g.us".
+        since: Optional cursor — pass the previous response's nextCursor to get only
+               messages newer than that poll.
+        from_me: Optional filter; true for messages the bot's own account sent, false
+                 for messages received from others.
+        limit: Optional row cap (1-500; default 100 server-side).
+
+    Returns {messages: [{id, waId, chatJid, senderJid, fromMe, timestamp, text,
+    mediaType, quotedWaId}], nextCursor}. nextCursor is the highest id in this batch
+    (null if empty) — pass it as `since` on the next poll.
+    """
+    return _call(_bot().list_inbound, jid=jid, since=since, from_me=from_me, limit=limit)
 
 
 # ── admin-scope DM tools (allowlist + resume) ───────────────────

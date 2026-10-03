@@ -17,6 +17,9 @@ real WhatsApp group and self-grants access to it, `leave_group` disbands
 the group for the bot, and `add_participants`/`remove_participants` add
 and kick real people. See docs/adr/0001-full-admin-no-guard-rails.md for
 rationale.
+
+Every tool takes an optional `account`: the name of one of the bot's extra
+WhatsApp numbers (see list_accounts). Omit it for the original number.
 """
 
 from __future__ import annotations
@@ -28,14 +31,15 @@ from mcp.server.fastmcp import FastMCP
 from wa_multiproject_bot_mcp.client import BotApiError, BotClient
 
 mcp = FastMCP("wa-multiproject-bot")
-_client: BotClient | None = None
+_clients: dict[str | None, BotClient] = {}
 
 
-def _bot() -> BotClient:
-    global _client
-    if _client is None:
-        _client = BotClient()
-    return _client
+def _bot(account: str | None = None) -> BotClient:
+    """Client for one WhatsApp number. None is the bot's original number."""
+    account = account or None
+    if account not in _clients:
+        _clients[account] = BotClient(account=account)
+    return _clients[account]
 
 
 def _call(fn, *args, **kwargs) -> Any:
@@ -50,13 +54,13 @@ def _call(fn, *args, **kwargs) -> Any:
 
 
 @mcp.tool()
-def health() -> dict[str, Any]:
+def health(account: str | None = None) -> dict[str, Any]:
     """Liveness check. Returns {ok, paired, projects}. Useful as a connection sanity check.
 
     `paired` indicates whether the bot's underlying WhatsApp account is connected;
     if false, posts will fail with a 503-equivalent error.
     """
-    return _call(_bot().health)
+    return _call(_bot(account).health)
 
 
 @mcp.tool()
@@ -66,6 +70,7 @@ def post_to_group(
     permalink: str | None = None,
     caption: str | None = None,
     media: list[dict[str, str]] | None = None,
+    account: str | None = None,
 ) -> dict[str, Any]:
     """Post a Text card (and optional Album of up to 10 Media items) to a WhatsApp group.
 
@@ -93,18 +98,18 @@ def post_to_group(
         body["caption"] = caption
     if media is not None:
         body["media"] = media
-    return _call(_bot().post, body)
+    return _call(_bot(account).post, body)
 
 
 @mcp.tool()
-def list_my_groups() -> dict[str, Any]:
+def list_my_groups(account: str | None = None) -> dict[str, Any]:
     """List the groups *this MCP's project* can post to right now.
 
     Returns the intersection of the project's access list and the global allowlist,
     each item being {jid, subject}. `subject` may be null if the bot's live group
     cache hasn't fetched it yet.
     """
-    return _call(_bot().list_my_groups)
+    return _call(_bot(account).list_my_groups)
 
 
 @mcp.tool()
@@ -113,6 +118,7 @@ def create_group(
     participants: list[str],
     announce: bool = False,
     description: str | None = None,
+    account: str | None = None,
 ) -> dict[str, Any]:
     """Create a new WhatsApp group and auto-grant this project access to it.
 
@@ -141,7 +147,7 @@ def create_group(
     failing the whole call.
     """
     return _call(
-        _bot().create_group,
+        _bot(account).create_group,
         subject,
         participants,
         announce=announce,
@@ -150,7 +156,7 @@ def create_group(
 
 
 @mcp.tool()
-def add_participants(group_jid: str, participants: list[str]) -> dict[str, Any]:
+def add_participants(group_jid: str, participants: list[str], account: str | None = None) -> dict[str, Any]:
     """Add participants to an existing group this project manages.
 
     The group_jid must be in this project's access list AND the global allowlist, else
@@ -167,11 +173,11 @@ def add_participants(group_jid: str, participants: list[str]) -> dict[str, Any]:
     Returns {ok, results:[{jid, status, added, note?}]}. `added` is true only when
     status is "200"; non-200 entries carry a `note` explaining why.
     """
-    return _call(_bot().add_participants, group_jid, participants)
+    return _call(_bot(account).add_participants, group_jid, participants)
 
 
 @mcp.tool()
-def remove_participants(group_jid: str, participants: list[str]) -> dict[str, Any]:
+def remove_participants(group_jid: str, participants: list[str], account: str | None = None) -> dict[str, Any]:
     """DESTRUCTIVE: remove participants from a group this project manages.
 
     Removed members are kicked immediately and must be re-added or re-invited to return.
@@ -185,11 +191,11 @@ def remove_participants(group_jid: str, participants: list[str]) -> dict[str, An
 
     Returns {ok, results:[{jid, status, added}]}.
     """
-    return _call(_bot().remove_participants, group_jid, participants)
+    return _call(_bot(account).remove_participants, group_jid, participants)
 
 
 @mcp.tool()
-def group_invite_code(group_jid: str) -> dict[str, Any]:
+def group_invite_code(group_jid: str, account: str | None = None) -> dict[str, Any]:
     """Fetch the current invite code and shareable link for a group this project manages.
 
     This is the recommended way to onboard people whom add_participants/create_group
@@ -202,11 +208,11 @@ def group_invite_code(group_jid: str) -> dict[str, Any]:
 
     Returns {ok, code, link} where link is "https://chat.whatsapp.com/<code>".
     """
-    return _call(_bot().group_invite_code, group_jid)
+    return _call(_bot(account).group_invite_code, group_jid)
 
 
 @mcp.tool()
-def revoke_invite(group_jid: str) -> dict[str, Any]:
+def revoke_invite(group_jid: str, account: str | None = None) -> dict[str, Any]:
     """Revoke the current invite link and mint a fresh one for a group this project manages.
 
     The old link stops working immediately; anyone who hadn't joined yet must use the new
@@ -219,11 +225,11 @@ def revoke_invite(group_jid: str) -> dict[str, Any]:
     Returns {ok, code, link} for the NEW invite, where link is
     "https://chat.whatsapp.com/<code>".
     """
-    return _call(_bot().revoke_invite, group_jid)
+    return _call(_bot(account).revoke_invite, group_jid)
 
 
 @mcp.tool()
-def set_group_setting(group_jid: str, setting: str) -> dict[str, Any]:
+def set_group_setting(group_jid: str, setting: str, account: str | None = None) -> dict[str, Any]:
     """Change a group-wide setting for a group this project manages.
 
     The group_jid must be in this project's access list AND the global allowlist, else
@@ -239,11 +245,11 @@ def set_group_setting(group_jid: str, setting: str) -> dict[str, Any]:
 
     Returns {ok, setting}.
     """
-    return _call(_bot().set_group_setting, group_jid, setting)
+    return _call(_bot(account).set_group_setting, group_jid, setting)
 
 
 @mcp.tool()
-def update_subject(group_jid: str, subject: str) -> dict[str, Any]:
+def update_subject(group_jid: str, subject: str, account: str | None = None) -> dict[str, Any]:
     """Rename a group this project manages.
 
     The group_jid must be in this project's access list AND the global allowlist, else
@@ -255,11 +261,11 @@ def update_subject(group_jid: str, subject: str) -> dict[str, Any]:
 
     Returns {ok}.
     """
-    return _call(_bot().update_subject, group_jid, subject)
+    return _call(_bot(account).update_subject, group_jid, subject)
 
 
 @mcp.tool()
-def update_description(group_jid: str, description: str) -> dict[str, Any]:
+def update_description(group_jid: str, description: str, account: str | None = None) -> dict[str, Any]:
     """Set or clear the description of a group this project manages.
 
     The group_jid must be in this project's access list AND the global allowlist, else
@@ -271,11 +277,11 @@ def update_description(group_jid: str, description: str) -> dict[str, Any]:
 
     Returns {ok}.
     """
-    return _call(_bot().update_description, group_jid, description)
+    return _call(_bot(account).update_description, group_jid, description)
 
 
 @mcp.tool()
-def leave_group(group_jid: str) -> dict[str, Any]:
+def leave_group(group_jid: str, account: str | None = None) -> dict[str, Any]:
     """DESTRUCTIVE: leave a group and drop it from this project's access list.
 
     The paired phone leaves the group (effectively disbanding it for the bot's purposes);
@@ -289,14 +295,14 @@ def leave_group(group_jid: str) -> dict[str, Any]:
 
     Returns {ok, leftGroup, removedFromProject, note}.
     """
-    return _call(_bot().leave_group, group_jid)
+    return _call(_bot(account).leave_group, group_jid)
 
 
 # ── project-scope DM tools (1:1 direct messages — HIGH BAN-RISK) ─
 
 
 @mcp.tool()
-def send_dm(to_jid: str, text: str) -> dict[str, Any]:
+def send_dm(to_jid: str, text: str, account: str | None = None) -> dict[str, Any]:
     """Send ONE 1:1 direct message. HIGH BAN-RISK — prefer an invite-link group post.
 
     Direct-messaging an unsolicited recipient is the fastest way to get the paired
@@ -311,11 +317,11 @@ def send_dm(to_jid: str, text: str) -> dict[str, Any]:
     Returns {ok, toJid, status}. A successful return means accepted for send, NOT
     guaranteed delivered — a WhatsApp restriction can surface a beat later.
     """
-    return _call(_bot().send_dm, to_jid, text)
+    return _call(_bot(account).send_dm, to_jid, text)
 
 
 @mcp.tool()
-def send_dm_batch(recipients: list[str], text: str) -> dict[str, Any]:
+def send_dm_batch(recipients: list[str], text: str, account: str | None = None) -> dict[str, Any]:
     """Enqueue up to 50 1:1 DMs to drain in the background. HIGH BAN-RISK.
 
     Nothing is sent synchronously: the queue drains with server-side caps + jitter the
@@ -330,21 +336,21 @@ def send_dm_batch(recipients: list[str], text: str) -> dict[str, Any]:
     Returns {ok, batchId, enqueued, duplicates, skipped}. Keep batchId to poll
     dm_status(batch_id=…) or stop it with dm_cancel(batch_id=…).
     """
-    return _call(_bot().send_dm_batch, recipients, text)
+    return _call(_bot(account).send_dm_batch, recipients, text)
 
 
 @mcp.tool()
-def dm_status(batch_id: str | None = None) -> dict[str, Any]:
+def dm_status(batch_id: str | None = None, account: str | None = None) -> dict[str, Any]:
     """DM sender status: pause state, pending count, recent volume, caps (read-only).
 
     Pass batch_id to also get that batch's pending/sent/failed/skipped counts. Caps are
     server-side and cannot be changed via the API.
     """
-    return _call(_bot().dm_status, batch_id)
+    return _call(_bot(account).dm_status, batch_id)
 
 
 @mcp.tool()
-def dm_cancel(batch_id: str) -> dict[str, Any]:
+def dm_cancel(batch_id: str, account: str | None = None) -> dict[str, Any]:
     """Cancel a DM batch: mark every still-pending row skipped (already-sent rows untouched).
 
     Args:
@@ -352,23 +358,23 @@ def dm_cancel(batch_id: str) -> dict[str, Any]:
 
     Returns {ok, cancelled}.
     """
-    return _call(_bot().dm_cancel, batch_id)
+    return _call(_bot(account).dm_cancel, batch_id)
 
 
 # ── admin-scope tools ───────────────────────────────────────────
 
 
 @mcp.tool()
-def list_projects() -> dict[str, Any]:
+def list_projects(account: str | None = None) -> dict[str, Any]:
     """List all projects on the bot with their per-project group access.
 
     Returns {projects: [{id, name, createdAt, groupJids}]}. Tokens are never returned.
     """
-    return _call(_bot().list_projects)
+    return _call(_bot(account).list_projects)
 
 
 @mcp.tool()
-def create_project(name: str, group_jids: list[str]) -> dict[str, Any]:
+def create_project(name: str, group_jids: list[str], account: str | None = None) -> dict[str, Any]:
     """Create a new project. Returns the project's token PLAINTEXT exactly once.
 
     The token is never recoverable after this call. Save it immediately. The chat
@@ -379,11 +385,11 @@ def create_project(name: str, group_jids: list[str]) -> dict[str, Any]:
         group_jids: Initial set of allowed group JIDs. Each must be in the global allowlist;
                     otherwise the bot returns 400.
     """
-    return _call(_bot().create_project, name, group_jids)
+    return _call(_bot(account).create_project, name, group_jids)
 
 
 @mcp.tool()
-def delete_project(project_id: int) -> dict[str, Any]:
+def delete_project(project_id: int, account: str | None = None) -> dict[str, Any]:
     """DESTRUCTIVE: hard-delete a project and cascade-delete its group access rows.
 
     The project's token immediately stops working; any consumer Worker using it breaks.
@@ -392,11 +398,11 @@ def delete_project(project_id: int) -> dict[str, Any]:
     Args:
         project_id: Numeric id from list_projects().
     """
-    return _call(_bot().delete_project, project_id)
+    return _call(_bot(account).delete_project, project_id)
 
 
 @mcp.tool()
-def rotate_project_token(project_id: int) -> dict[str, Any]:
+def rotate_project_token(project_id: int, account: str | None = None) -> dict[str, Any]:
     """DESTRUCTIVE: mint a new token for an existing project; old token stops working.
 
     Returns {token: "..."} in plaintext. Save it immediately. Any consumer Worker
@@ -405,11 +411,11 @@ def rotate_project_token(project_id: int) -> dict[str, Any]:
     Args:
         project_id: Numeric id from list_projects().
     """
-    return _call(_bot().rotate_project_token, project_id)
+    return _call(_bot(account).rotate_project_token, project_id)
 
 
 @mcp.tool()
-def set_project_groups(project_id: int, group_jids: list[str]) -> dict[str, Any]:
+def set_project_groups(project_id: int, group_jids: list[str], account: str | None = None) -> dict[str, Any]:
     """DESTRUCTIVE: REPLACE a project's allowed group JIDs (does not merge).
 
     Every JID must be in the global allowlist or the call returns 400. Pass the FULL
@@ -419,31 +425,31 @@ def set_project_groups(project_id: int, group_jids: list[str]) -> dict[str, Any]
         project_id: Numeric id from list_projects().
         group_jids: The complete new set of allowed group JIDs for this project.
     """
-    return _call(_bot().set_project_groups, project_id, group_jids)
+    return _call(_bot(account).set_project_groups, project_id, group_jids)
 
 
 @mcp.tool()
-def list_live_groups() -> dict[str, Any]:
+def list_live_groups(account: str | None = None) -> dict[str, Any]:
     """List every WhatsApp group the paired phone is currently a member of.
 
     Each entry is {jid, subject, allowed} where `allowed` indicates whether the group
     is in the global allowlist. Backed by a 60s cache of sock.groupFetchAllParticipating.
     """
-    return _call(_bot().list_live_groups)
+    return _call(_bot(account).list_live_groups)
 
 
 @mcp.tool()
-def get_allowlist() -> dict[str, Any]:
+def get_allowlist(account: str | None = None) -> dict[str, Any]:
     """Return the current global allowlist as {jids: [...]}.
 
     The allowlist is the set of group JIDs the bot will accept as send targets at all.
     Any send to a JID not in this set returns 403.
     """
-    return _call(_bot().get_allowlist)
+    return _call(_bot(account).get_allowlist)
 
 
 @mcp.tool()
-def replace_allowlist(jids: list[str]) -> dict[str, Any]:
+def replace_allowlist(jids: list[str], account: str | None = None) -> dict[str, Any]:
     """DESTRUCTIVE: REPLACE the entire global allowlist atomically.
 
     This is a full overwrite, not a merge. Any JID currently in the allowlist but
@@ -456,7 +462,7 @@ def replace_allowlist(jids: list[str]) -> dict[str, Any]:
     Args:
         jids: The full intended allowlist.
     """
-    return _call(_bot().replace_allowlist, jids)
+    return _call(_bot(account).replace_allowlist, jids)
 
 
 @mcp.tool()
@@ -464,6 +470,7 @@ def list_messages(
     project: str | None = None,
     group: str | None = None,
     limit: int | None = None,
+    account: str | None = None,
 ) -> dict[str, Any]:
     """List recent Post attempts (successful and failed) from the bot's message_log.
 
@@ -476,7 +483,7 @@ def list_messages(
         group: Optional group JID filter (exact match).
         limit: Optional row cap (1-500; default 100 server-side).
     """
-    return _call(_bot().list_messages, project=project, group=group, limit=limit)
+    return _call(_bot(account).list_messages, project=project, group=group, limit=limit)
 
 
 # ── admin-scope inbound tools ────────────────────────────────────
@@ -486,7 +493,7 @@ def list_messages(
 
 
 @mcp.tool()
-def list_readable_chats() -> dict[str, Any]:
+def list_readable_chats(account: str | None = None) -> dict[str, Any]:
     """List chats the bot is currently capturing inbound messages from.
 
     This is the opt-in gate for list_inbound: a chat's messages are only stored if its
@@ -494,11 +501,11 @@ def list_readable_chats() -> dict[str, Any]:
     label, addedAt, subject}]}. `subject` is the live WhatsApp group name when available
     (groups only); null otherwise.
     """
-    return _call(_bot().list_readable_chats)
+    return _call(_bot(account).list_readable_chats)
 
 
 @mcp.tool()
-def set_readable_chats(chats: list[dict[str, Any]]) -> dict[str, Any]:
+def set_readable_chats(chats: list[dict[str, Any]], account: str | None = None) -> dict[str, Any]:
     """DESTRUCTIVE: REPLACE the entire readable-chats set (not additive).
 
     Any jid currently readable but NOT in `chats` stops being captured. Turning capture
@@ -514,7 +521,7 @@ def set_readable_chats(chats: list[dict[str, Any]]) -> dict[str, Any]:
 
     Returns {ok}.
     """
-    return _call(_bot().set_readable_chats, chats)
+    return _call(_bot(account).set_readable_chats, chats)
 
 
 @mcp.tool()
@@ -523,6 +530,7 @@ def list_inbound(
     since: int | None = None,
     from_me: bool | None = None,
     limit: int | None = None,
+    account: str | None = None,
 ) -> dict[str, Any]:
     """List recent inbound messages captured from readable chats (see list_readable_chats).
 
@@ -542,23 +550,23 @@ def list_inbound(
     mediaType, quotedWaId}], nextCursor}. nextCursor is the highest id in this batch
     (null if empty) — pass it as `since` on the next poll.
     """
-    return _call(_bot().list_inbound, jid=jid, since=since, from_me=from_me, limit=limit)
+    return _call(_bot(account).list_inbound, jid=jid, since=since, from_me=from_me, limit=limit)
 
 
 # ── admin-scope DM tools (allowlist + resume) ───────────────────
 
 
 @mcp.tool()
-def get_dm_allowlist() -> dict[str, Any]:
+def get_dm_allowlist(account: str | None = None) -> dict[str, Any]:
     """ADMIN: get the DM (1:1) recipient allowlist. Returns {jids: [...]}.
 
     Only recipients on this list can receive DMs via send_dm / send_dm_batch.
     """
-    return _call(_bot().get_dm_allowlist)
+    return _call(_bot(account).get_dm_allowlist)
 
 
 @mcp.tool()
-def set_dm_allowlist(jids: list[str]) -> dict[str, Any]:
+def set_dm_allowlist(jids: list[str], account: str | None = None) -> dict[str, Any]:
     """ADMIN: REPLACE the entire DM (1:1) recipient allowlist (not additive).
 
     Args:
@@ -567,11 +575,11 @@ def set_dm_allowlist(jids: list[str]) -> dict[str, Any]:
 
     Returns {ok, count}.
     """
-    return _call(_bot().set_dm_allowlist, jids)
+    return _call(_bot(account).set_dm_allowlist, jids)
 
 
 @mcp.tool()
-def dm_resume() -> dict[str, Any]:
+def dm_resume(account: str | None = None) -> dict[str, Any]:
     """ADMIN: resume DM sending after an auto-pause. Deliberate operator cool-off action.
 
     The DM queue auto-pauses when WhatsApp restricts the account. Resuming is admin-scoped
@@ -580,7 +588,37 @@ def dm_resume() -> dict[str, Any]:
 
     Returns {ok, resumed, status}.
     """
-    return _call(_bot().dm_resume)
+    return _call(_bot(account).dm_resume)
+
+
+# ── accounts (one bot, several WhatsApp numbers) ─────────────
+
+
+@mcp.tool()
+def list_accounts() -> dict[str, Any]:
+    """ADMIN: list the WhatsApp numbers this bot runs and whether each is linked.
+
+    Returns {accounts: [{name, prefix, paired, me}]}. `me` is the linked number's JID.
+    Pass `name` as `account` to any other tool; the account at prefix "/" is the
+    default and needs no `account` argument.
+    """
+    return _call(_bot().list_accounts)
+
+
+@mcp.tool()
+def get_qr(out_path: str, account: str | None = None) -> dict[str, Any]:
+    """ADMIN: save the pairing QR for an unlinked number as a PNG at `out_path`.
+
+    Whoever scans it takes control of that number on the bot, so hand it only to the
+    number's owner. It expires in about 20 seconds; fetch it again if it does. Errors
+    with 404 once the number is linked, 503 while the QR is not ready yet.
+
+    Returns {ok, path, bytes}.
+    """
+    png = _call(_bot(account).qr_png)
+    with open(out_path, "wb") as fh:
+        fh.write(png)
+    return {"ok": True, "path": out_path, "bytes": len(png)}
 
 
 # ── entry point ────────────────────────────────────────────────

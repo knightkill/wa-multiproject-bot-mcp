@@ -143,6 +143,22 @@ class BotClient:
     def list_accounts(self) -> Any:
         return self._request("GET", "/accounts", scope="server")
 
+    def inbound_media(self, message_id: int) -> tuple[bytes, str]:
+        try:
+            response = self._client.get(
+                f"{self.base_url}{self.prefix}/admin/api/inbound/{int(message_id)}/media",
+                headers={"Authorization": f"Bearer {self.admin_token}"},
+            )
+        except httpx.HTTPError as exc:
+            raise BotApiError(0, "transport_error", str(exc)) from exc
+        if response.status_code >= 400:
+            try:
+                body = response.json()
+                raise BotApiError(response.status_code, body.get("error", "error"), body.get("detail"))
+            except ValueError:
+                raise BotApiError(response.status_code, response.text[:200]) from None
+        return response.content, response.headers.get("content-type", "application/octet-stream")
+
     def qr_png(self) -> bytes:
         try:
             response = self._client.get(

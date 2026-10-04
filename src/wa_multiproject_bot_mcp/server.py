@@ -534,7 +534,8 @@ def list_inbound(
 ) -> dict[str, Any]:
     """List recent inbound messages captured from readable chats (see list_readable_chats).
 
-    Newest first. A jid that was never added via set_readable_chats returns an empty
+    Newest first by send time. Media messages carry media_type, media_mime and
+    media_saved (1 = file already on the bot); fetch the file with get_media(id). A jid that was never added via set_readable_chats returns an empty
     list even if the bot is a member of that chat — capture must be explicitly opted in,
     and only messages received after opt-in are stored.
 
@@ -589,6 +590,33 @@ def dm_resume(account: str | None = None) -> dict[str, Any]:
     Returns {ok, resumed, status}.
     """
     return _call(_bot(account).dm_resume)
+
+
+@mcp.tool()
+def get_media(
+    message_id: int,
+    out_dir: str = "/tmp/wa-media",
+    account: str | None = None,
+) -> dict[str, Any]:
+    """ADMIN: download the image / document / voice note of one captured message.
+
+    `message_id` is the `id` field from list_inbound (not wa_id). Saves the file under
+    `out_dir` and returns {ok, path, mime, bytes}; read the path to view it. Images
+    and documents from live messages are saved by the bot on arrival; anything else
+    is fetched from WhatsApp on request, which fails (410) once WhatsApp has expired
+    it, and always for media captured before 2026-10-04.
+    """
+    import mimetypes
+    import os
+
+    data, mime = _call(_bot(account).inbound_media, message_id)
+    mime = mime.split(";")[0].strip()
+    ext = mimetypes.guess_extension(mime) or ".bin"
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"{account or 'default'}-{int(message_id)}{ext}")
+    with open(path, "wb") as fh:
+        fh.write(data)
+    return {"ok": True, "path": path, "mime": mime, "bytes": len(data)}
 
 
 # ── accounts (one bot, several WhatsApp numbers) ─────────────

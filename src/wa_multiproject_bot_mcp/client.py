@@ -338,6 +338,17 @@ class BotClient:
     def dm_resume(self) -> Any:
         return self._request("POST", "/admin/api/dm/resume", scope="admin")
 
+    def find_contact(self, query: str | None = None, limit: int | None = None) -> Any:
+        params: dict[str, Any] = {}
+        if query:
+            params["q"] = query
+        if limit is not None:
+            params["limit"] = str(limit)
+        return self._request("GET", "/admin/api/contacts", scope="admin", params=params)
+
+    def resync_contacts(self) -> Any:
+        return self._request("POST", "/admin/api/contacts/resync", scope="admin")
+
     def get_dm_allowlist(self) -> Any:
         return self._request("GET", "/admin/api/dm-allowlist", scope="admin")
 

@@ -547,11 +547,55 @@ def list_inbound(
                  for messages received from others.
         limit: Optional row cap (1-500; default 100 server-side).
 
-    Returns {messages: [{id, waId, chatJid, senderJid, fromMe, timestamp, text,
-    mediaType, quotedWaId}], nextCursor}. nextCursor is the highest id in this batch
+    Returns {messages: [{id, wa_id, chat_jid, sender_jid, sender_name, chat_name,
+    from_me, timestamp, text, media_type, quoted_wa_id, media_mime, media_saved}],
+    nextCursor}. sender_name / chat_name are contact names (see find_contact), null
+    when unknown; chat_name is null for groups. nextCursor is the highest id in this batch
     (null if empty) — pass it as `since` on the next poll.
     """
     return _call(_bot(account).list_inbound, jid=jid, since=since, from_me=from_me, limit=limit)
+
+
+# ── admin-scope contact tools ───────────────────────────────────
+
+
+@mcp.tool()
+def find_contact(query: str | None = None, limit: int | None = None, account: str | None = None) -> dict[str, Any]:
+    """ADMIN: look up people by name or number in the bot's contact names.
+
+    Names come from three sources kept side by side: the operator's WhatsApp address
+    book, their Google Contacts (pushed hourly by an Apps Script), and the pushName the
+    person set on their own profile. `name` is the one to show, picked in that order;
+    `source` says which. Matching is a case-insensitive substring over every name,
+    Google alias (other spellings from duplicate Google entries) and the JID digits.
+
+    Use this to turn "DM Joshil" into a JID, then pass that JID explicitly to send_dm /
+    add_participants. If several contacts match, ask the user which one — never guess:
+    a wrong DM recipient is not undoable. A match does NOT mean the person is on the DM
+    allowlist (see get_dm_allowlist).
+
+    Args:
+        query: Substring to match; omit to list contacts alphabetically.
+        limit: Max rows (1-200; default 20).
+
+    Returns {contacts: [{jid, lids, name, source, whatsappName, googleName,
+    googleAliases, pushName}], counts: {total, whatsapp, google, pushname, lids}}.
+    """
+    return _call(_bot(account).find_contact, query, limit)
+
+
+@mcp.tool()
+def resync_contacts(account: str | None = None) -> dict[str, Any]:
+    """ADMIN: re-pull the WhatsApp address-book names from the paired phone.
+
+    New and edited contacts arrive on their own; use this once after first deploying
+    contact support, or if find_contact is missing names the phone has. It re-reads the
+    full address-book snapshot (no re-pairing). Google names are unaffected — those
+    come from the Apps Script push.
+
+    Returns {ok, before, after} contact counts.
+    """
+    return _call(_bot(account).resync_contacts)
 
 
 # ── admin-scope DM tools (allowlist + resume) ───────────────────

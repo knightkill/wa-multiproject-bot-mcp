@@ -9,6 +9,11 @@ Configuration comes from environment variables only:
   WP_BASE_URL       e.g. https://your-domain.example
   WP_ADMIN_TOKEN    ADMIN_TOKEN Fly secret
   WP_PROJECT_TOKEN  per-project token for posting
+
+A bot can run several WhatsApp numbers ("accounts"). The original one is
+served at the root; each extra one under /a/<account>/ with its own
+projects, so its project token comes from WP_PROJECT_TOKEN_<ACCOUNT>
+(upper-cased, '-' as '_'). The admin token is shared.
 """
 
 from __future__ import annotations
@@ -52,12 +57,23 @@ class BotClient:
         admin_token: str | None = None,
         project_token: str | None = None,
         timeout: float = 290.0,
+        account: str | None = None,
     ) -> None:
         # 290s matches the Fly proxy idle_timeout=300 minus a safety
         # margin; the bot itself caps a Post at 270s.
         self.base_url = (base_url or _require_env("WP_BASE_URL")).rstrip("/")
         self.admin_token = admin_token or _require_env("WP_ADMIN_TOKEN")
-        self.project_token = project_token or _require_env("WP_PROJECT_TOKEN")
+        self.account = account
+        self.prefix = f"/a/{account}" if account else ""
+        if project_token:
+            self.project_token = project_token
+        elif account:
+            # Optional until a project-scope call is made on this account.
+            env = "WP_PROJECT_TOKEN_" + account.upper().replace("-", "_")
+            self.project_token = os.environ.get(env, "").strip() or None
+            self._project_token_env = env
+        else:
+            self.project_token = _require_env("WP_PROJECT_TOKEN")
         self._client = httpx.Client(timeout=timeout)
 
     def close(self) -> None:
@@ -74,8 +90,18 @@ class BotClient:
         json_body: Any = None,
         params: dict[str, Any] | None = None,
     ) -> Any:
-        token = self.admin_token if scope == "admin" else self.project_token
-        url = f"{self.base_url}{path}"
+        token = self.admin_token if scope in ("admin", "server") else self.project_token
+        if token is None:
+            raise BotConfigError(
+                f"{self._project_token_env} env var is required for project-scope "
+                f"calls on account {self.account!r}."
+            )
+        if scope == "server":
+            url = f"{self.base_url}{path}"
+        elif path == "/":
+            url = f"{self.base_url}{self.prefix or '/'}"
+        else:
+            url = f"{self.base_url}{self.prefix}{path}"
         try:
             response = self._client.request(
                 method,
@@ -110,7 +136,44 @@ class BotClient:
     # ── project scope ─────────────────────────────────────────
 
     def health(self) -> Any:
-        return self._request("GET", "/", scope="project")
+        # Unauthenticated route; send the admin token so it works on an
+        # account that has no project token configured.
+        return self._request("GET", "/", scope="admin")
+
+    def list_accounts(self) -> Any:
+        return self._request("GET", "/accounts", scope="server")
+
+    def inbound_media(self, message_id: int) -> tuple[bytes, str]:
+        try:
+            response = self._client.get(
+                f"{self.base_url}{self.prefix}/admin/api/inbound/{int(message_id)}/media",
+                headers={"Authorization": f"Bearer {self.admin_token}"},
+            )
+        except httpx.HTTPError as exc:
+            raise BotApiError(0, "transport_error", str(exc)) from exc
+        if response.status_code >= 400:
+            try:
+                body = response.json()
+                raise BotApiError(response.status_code, body.get("error", "error"), body.get("detail"))
+            except ValueError:
+                raise BotApiError(response.status_code, response.text[:200]) from None
+        return response.content, response.headers.get("content-type", "application/octet-stream")
+
+    def qr_png(self) -> bytes:
+        try:
+            response = self._client.get(
+                f"{self.base_url}{self.prefix}/qr",
+                headers={"Authorization": f"Bearer {self.admin_token}"},
+            )
+        except httpx.HTTPError as exc:
+            raise BotApiError(0, "transport_error", str(exc)) from exc
+        if response.status_code >= 400:
+            try:
+                error = response.json().get("error", "error")
+            except ValueError:
+                error = response.text[:200]
+            raise BotApiError(response.status_code, error)
+        return response.content
 
     def post(self, body: dict[str, Any]) -> Any:
         return self._request("POST", "/v1/post", scope="project", json_body=body)
@@ -274,6 +337,17 @@ class BotClient:
 
     def dm_resume(self) -> Any:
         return self._request("POST", "/admin/api/dm/resume", scope="admin")
+
+    def find_contact(self, query: str | None = None, limit: int | None = None) -> Any:
+        params: dict[str, Any] = {}
+        if query:
+            params["q"] = query
+        if limit is not None:
+            params["limit"] = str(limit)
+        return self._request("GET", "/admin/api/contacts", scope="admin", params=params)
+
+    def resync_contacts(self) -> Any:
+        return self._request("POST", "/admin/api/contacts/resync", scope="admin")
 
     def get_dm_allowlist(self) -> Any:
         return self._request("GET", "/admin/api/dm-allowlist", scope="admin")

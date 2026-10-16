@@ -1,6 +1,6 @@
 # wa-multiproject-bot-mcp
 
-Local-only MCP adapter for the wa-multiproject-bot WhatsApp bot at `https://your-domain.example`. Exposes 31 tools over stdio so Claude Desktop / Claude Code can drive the bot directly — primary use case is "Claude, post this to a WhatsApp group."
+Local-only MCP adapter for the wa-multiproject-bot WhatsApp bot at `https://your-domain.example`. Exposes 36 tools over stdio so Claude Desktop / Claude Code can drive the bot directly — primary use case is "Claude, post this to a WhatsApp group."
 
 Runs entirely locally; never deployed. The bot itself stays where it is on Fly.
 
@@ -103,6 +103,8 @@ Restart any existing Claude Code session before the tools become available — m
 | `get_dm_allowlist` | `GET /admin/api/dm-allowlist` | admin |
 | `set_dm_allowlist` | `PUT /admin/api/dm-allowlist` | admin |
 | `dm_resume` | `POST /admin/api/dm/resume` | admin |
+| `find_contact` | `GET /admin/api/contacts` | admin |
+| `resync_contacts` | `POST /admin/api/contacts/resync` | admin |
 
 Validation is delegated to the bot — type hints in tool signatures are for the agent's benefit; bad input produces a 400 from the bot that surfaces as the tool's error text.
 

@@ -178,6 +178,9 @@ class BotClient:
     def post(self, body: dict[str, Any]) -> Any:
         return self._request("POST", "/v1/post", scope="project", json_body=body)
 
+    def post_file(self, body: dict[str, Any]) -> Any:
+        return self._request("POST", "/v1/post/file", scope="project", json_body=body)
+
     def list_my_groups(self) -> Any:
         return self._request("GET", "/v1/groups", scope="project")
 

@@ -104,6 +104,33 @@ def post_to_group(
 
 
 @mcp.tool()
+def post_file_to_group(
+    group_jid: str,
+    file_path: str,
+    caption: str | None = None,
+    account: str | None = None,
+) -> dict[str, Any]:
+    """Post ONE local image or PDF to a WhatsApp group, with no text card in front of it.
+
+    The group_jid must be in this MCP project's access list AND in the global allowlist;
+    otherwise the bot returns 403. Unlike post_to_group, the file is read on this
+    machine and uploaded inline — it is never hosted at a URL.
+
+    Args:
+        group_jid: Target group, e.g. "1234567890-1612345678@g.us".
+        file_path: .jpg/.jpeg/.png/.webp (sent as an image) or .pdf (sent as a
+            document), max 5 MB.
+        caption: Optional caption under the file.
+
+    Returns {ok, project}.
+    """
+    body: dict[str, Any] = {"groupJid": group_jid, "media": _read_media_file(file_path)}
+    if caption:
+        body["caption"] = caption
+    return _call(_bot(account).post_file, body)
+
+
+@mcp.tool()
 def list_my_groups(account: str | None = None) -> dict[str, Any]:
     """List the groups *this MCP's project* can post to right now.
 
@@ -313,6 +340,22 @@ _DM_MEDIA_TYPES = {
 _DM_MEDIA_MAX_BYTES = 5 * 1024 * 1024
 
 
+def _read_media_file(file_path: str) -> dict[str, str]:
+    """Read a local image/PDF into the bot's inline media shape, checking type and size."""
+    path = Path(file_path).expanduser()
+    mimetype = _DM_MEDIA_TYPES.get(path.suffix.lower())
+    if mimetype is None:
+        raise ValueError(f"unsupported file type {path.suffix!r}; use {sorted(_DM_MEDIA_TYPES)}")
+    data = path.read_bytes()
+    if len(data) > _DM_MEDIA_MAX_BYTES:
+        raise ValueError(f"{path.name} is {len(data)} bytes; the limit is {_DM_MEDIA_MAX_BYTES}")
+    return {
+        "data": base64.b64encode(data).decode("ascii"),
+        "mimetype": mimetype,
+        "filename": path.name,
+    }
+
+
 @mcp.tool()
 def send_dm(
     to_jid: str,
@@ -341,20 +384,7 @@ def send_dm(
     """
     if not text and not file_path:
         raise ValueError("text or file_path is required")
-    media = None
-    if file_path:
-        path = Path(file_path).expanduser()
-        mimetype = _DM_MEDIA_TYPES.get(path.suffix.lower())
-        if mimetype is None:
-            raise ValueError(f"unsupported file type {path.suffix!r}; use {sorted(_DM_MEDIA_TYPES)}")
-        data = path.read_bytes()
-        if len(data) > _DM_MEDIA_MAX_BYTES:
-            raise ValueError(f"{path.name} is {len(data)} bytes; the limit is {_DM_MEDIA_MAX_BYTES}")
-        media = {
-            "data": base64.b64encode(data).decode("ascii"),
-            "mimetype": mimetype,
-            "filename": path.name,
-        }
+    media = _read_media_file(file_path) if file_path else None
     return _call(_bot(account).send_dm, to_jid, text, media)
 
 

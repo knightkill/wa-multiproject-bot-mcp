@@ -265,11 +265,15 @@ class BotClient:
     # Recipients must be on the DM allowlist (admin-managed). Caps and
     # jitter are enforced server-side and cannot be raised from here.
 
-    def send_dm(self, to_jid: str, text: str) -> Any:
-        return self._request(
-            "POST", "/v1/dm", scope="project",
-            json_body={"toJid": to_jid, "text": text},
-        )
+    def send_dm(
+        self, to_jid: str, text: str | None = None, media: dict[str, str] | None = None
+    ) -> Any:
+        body: dict[str, Any] = {"toJid": to_jid}
+        if text:
+            body["text"] = text
+        if media:
+            body["media"] = media
+        return self._request("POST", "/v1/dm", scope="project", json_body=body)
 
     def send_dm_batch(self, recipients: list[str], text: str) -> Any:
         return self._request(

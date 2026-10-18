@@ -24,6 +24,8 @@ WhatsApp numbers (see list_accounts). Omit it for the original number.
 
 from __future__ import annotations
 
+import base64
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -301,9 +303,24 @@ def leave_group(group_jid: str, account: str | None = None) -> dict[str, Any]:
 # ── project-scope DM tools (1:1 direct messages — HIGH BAN-RISK) ─
 
 
+_DM_MEDIA_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".pdf": "application/pdf",
+}
+_DM_MEDIA_MAX_BYTES = 5 * 1024 * 1024
+
+
 @mcp.tool()
-def send_dm(to_jid: str, text: str, account: str | None = None) -> dict[str, Any]:
-    """Send ONE 1:1 direct message. HIGH BAN-RISK — prefer an invite-link group post.
+def send_dm(
+    to_jid: str,
+    text: str | None = None,
+    file_path: str | None = None,
+    account: str | None = None,
+) -> dict[str, Any]:
+    """Send ONE 1:1 direct message, optionally with an image or PDF. HIGH BAN-RISK — prefer an invite-link group post.
 
     Direct-messaging an unsolicited recipient is the fastest way to get the paired
     number flagged. The recipient must be on the DM allowlist (admin-managed via
@@ -312,12 +329,33 @@ def send_dm(to_jid: str, text: str, account: str | None = None) -> dict[str, Any
 
     Args:
         to_jid: Recipient user JID, e.g. "6191234567@s.whatsapp.net".
-        text: Message body (max 4096 chars).
+        text: Message body (max 4096 chars); the caption when file_path is given.
+        file_path: Optional local file to attach — .jpg/.jpeg/.png/.webp (sent as an
+            image) or .pdf (sent as a document), max 5 MB. Read on this machine and
+            uploaded inline; it is not hosted anywhere.
+
+    At least one of text or file_path is required.
 
     Returns {ok, toJid, status}. A successful return means accepted for send, NOT
     guaranteed delivered — a WhatsApp restriction can surface a beat later.
     """
-    return _call(_bot(account).send_dm, to_jid, text)
+    if not text and not file_path:
+        raise ValueError("text or file_path is required")
+    media = None
+    if file_path:
+        path = Path(file_path).expanduser()
+        mimetype = _DM_MEDIA_TYPES.get(path.suffix.lower())
+        if mimetype is None:
+            raise ValueError(f"unsupported file type {path.suffix!r}; use {sorted(_DM_MEDIA_TYPES)}")
+        data = path.read_bytes()
+        if len(data) > _DM_MEDIA_MAX_BYTES:
+            raise ValueError(f"{path.name} is {len(data)} bytes; the limit is {_DM_MEDIA_MAX_BYTES}")
+        media = {
+            "data": base64.b64encode(data).decode("ascii"),
+            "mimetype": mimetype,
+            "filename": path.name,
+        }
+    return _call(_bot(account).send_dm, to_jid, text, media)
 
 
 @mcp.tool()

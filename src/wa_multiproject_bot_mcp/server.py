@@ -110,7 +110,7 @@ def post_file_to_group(
     caption: str | None = None,
     account: str | None = None,
 ) -> dict[str, Any]:
-    """Post ONE local image or PDF to a WhatsApp group, with no text card in front of it.
+    """Post ONE local image, PDF or zip to a WhatsApp group, with no text card in front of it.
 
     The group_jid must be in this MCP project's access list AND in the global allowlist;
     otherwise the bot returns 403. Unlike post_to_group, the file is read on this
@@ -118,8 +118,8 @@ def post_file_to_group(
 
     Args:
         group_jid: Target group, e.g. "1234567890-1612345678@g.us".
-        file_path: .jpg/.jpeg/.png/.webp (sent as an image) or .pdf (sent as a
-            document), max 5 MB.
+        file_path: .jpg/.jpeg/.png/.webp (sent as an image, max 5 MB) or .pdf/.zip
+            (sent as a document, max 25 MB).
         caption: Optional caption under the file.
 
     Returns {ok, project}.
@@ -336,19 +336,23 @@ _DM_MEDIA_TYPES = {
     ".png": "image/png",
     ".webp": "image/webp",
     ".pdf": "application/pdf",
+    ".zip": "application/zip",
 }
+# Mirrors the bot: images up to 5 MB, documents (PDF, zip) up to 25 MB.
 _DM_MEDIA_MAX_BYTES = 5 * 1024 * 1024
+_DOCUMENT_MAX_BYTES = 25 * 1024 * 1024
 
 
 def _read_media_file(file_path: str) -> dict[str, str]:
-    """Read a local image/PDF into the bot's inline media shape, checking type and size."""
+    """Read a local image/PDF/zip into the bot's inline media shape, checking type and size."""
     path = Path(file_path).expanduser()
     mimetype = _DM_MEDIA_TYPES.get(path.suffix.lower())
     if mimetype is None:
         raise ValueError(f"unsupported file type {path.suffix!r}; use {sorted(_DM_MEDIA_TYPES)}")
     data = path.read_bytes()
-    if len(data) > _DM_MEDIA_MAX_BYTES:
-        raise ValueError(f"{path.name} is {len(data)} bytes; the limit is {_DM_MEDIA_MAX_BYTES}")
+    limit = _DM_MEDIA_MAX_BYTES if mimetype.startswith("image/") else _DOCUMENT_MAX_BYTES
+    if len(data) > limit:
+        raise ValueError(f"{path.name} is {len(data)} bytes; the limit is {limit}")
     return {
         "data": base64.b64encode(data).decode("ascii"),
         "mimetype": mimetype,
@@ -363,7 +367,7 @@ def send_dm(
     file_path: str | None = None,
     account: str | None = None,
 ) -> dict[str, Any]:
-    """Send ONE 1:1 direct message, optionally with an image or PDF. HIGH BAN-RISK — prefer an invite-link group post.
+    """Send ONE 1:1 direct message, optionally with an image, PDF or zip. HIGH BAN-RISK — prefer an invite-link group post.
 
     Direct-messaging an unsolicited recipient is the fastest way to get the paired
     number flagged. The recipient must be on the DM allowlist (admin-managed via
@@ -374,8 +378,8 @@ def send_dm(
         to_jid: Recipient user JID, e.g. "6191234567@s.whatsapp.net".
         text: Message body (max 4096 chars); the caption when file_path is given.
         file_path: Optional local file to attach — .jpg/.jpeg/.png/.webp (sent as an
-            image) or .pdf (sent as a document), max 5 MB. Read on this machine and
-            uploaded inline; it is not hosted anywhere.
+            image, max 5 MB) or .pdf/.zip (sent as a document, max 25 MB). Read on this
+            machine and uploaded inline; it is not hosted anywhere.
 
     At least one of text or file_path is required.
 
